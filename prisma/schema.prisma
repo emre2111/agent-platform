@@ -1,0 +1,392 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [pgcrypto]
+}
+
+// ─────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum AgentStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+  ARCHIVED
+}
+
+enum RoomStatus {
+  IDLE
+  RUNNING
+  PAUSED
+  CLOSED
+}
+
+enum TurnPolicy {
+  ROUND_ROBIN
+  MODERATED
+  FREE_FORM
+}
+
+enum ParticipantType {
+  AGENT
+  USER
+}
+
+enum SenderType {
+  USER
+  AGENT
+  SYSTEM
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  TIMED_OUT
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+// ─────────────────────────────────────────────
+// User
+// ─────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String   @unique
+  name          String
+  avatarUrl     String?
+  passwordHash  String?
+  emailVerified Boolean  @default(false)
+  lastLoginAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships             WorkspaceMember[]
+  ownedAgents             Agent[]
+  apiKeys                 ApiKey[]
+  sentMessages            Message[]              @relation("UserMessages")
+  roomParticipations      ConversationParticipant[] @relation("UserParticipants")
+  roomsCreated            ConversationRoom[]
+  auditLogs               AuditLog[]
+  sentInvites             RoomInvite[]           @relation("SentInvites")
+  receivedInvites         RoomInvite[]           @relation("ReceivedInvites")
+
+  @@index([email])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────
+// Workspace (tenant boundary)
+// ─────────────────────────────────────────────
+
+model Workspace {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members  WorkspaceMember[]
+  agents   Agent[]
+  rooms    ConversationRoom[]
+  apiKeys  ApiKey[]
+  auditLogs AuditLog[]
+  roomInvites RoomInvite[]
+
+  @@index([slug])
+  @@map("workspaces")
+}
+
+// ─────────────────────────────────────────────
+// Workspace membership (join table with role)
+// ─────────────────────────────────────────────
+
+model WorkspaceMember {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String        @db.Uuid
+  workspaceId String        @db.Uuid
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("workspace_members")
+}
+
+// ─────────────────────────────────────────────
+// Agent
+// ─────────────────────────────────────────────
+
+model Agent {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String      @db.Uuid
+  ownerId       String      @db.Uuid
+  name          String
+  description   String?
+  systemPrompt  String
+  modelProvider String      // e.g. "openai", "anthropic", "ollama"
+  modelName     String      // e.g. "gpt-4o", "claude-sonnet-4-20250514"
+  modelConfig   Json        @default("{}")
+  status        AgentStatus @default(DRAFT)
+  isPublic      Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  workspace    Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  owner        User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  credentials  AgentCredential[]
+  participants ConversationParticipant[] @relation("AgentParticipants")
+  runs         AgentRun[]
+  messages     Message[]              @relation("AgentMessages")
+  roomInvites  RoomInvite[]
+
+  @@index([workspaceId])
+  @@index([ownerId])
+  @@index([workspaceId, status])
+  @@map("agents")
+}
+
+// ─────────────────────────────────────────────
+// Agent credential (encrypted provider keys)
+// ─────────────────────────────────────────────
+
+model AgentCredential {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentId        String   @db.Uuid
+  provider       String   // matches Agent.modelProvider
+  encryptedKey   String   // AES-256-GCM ciphertext
+  keyFingerprint String   // last 4 chars or SHA-256 prefix for identification
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, provider])
+  @@index([agentId])
+  @@map("agent_credentials")
+}
+
+// ─────────────────────────────────────────────
+// Conversation room
+// ─────────────────────────────────────────────
+
+model ConversationRoom {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String     @db.Uuid
+  createdById String     @db.Uuid
+  name        String
+  description String?
+  status      RoomStatus @default(IDLE)
+  turnPolicy  TurnPolicy @default(ROUND_ROBIN)
+  maxTurns               Int?
+  turnCount              Int        @default(0)
+  consecutiveFailures    Int        @default(0)
+  maxConsecutiveFailures Int        @default(3)
+  turnDelayMs            Int        @default(1000)
+  absoluteDeadline       DateTime?
+  closedReason           String?
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+  closedAt               DateTime?
+
+  workspace    Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy    User                   @relation(fields: [createdById], references: [id])
+  participants ConversationParticipant[]
+  messages     Message[]
+  runs         AgentRun[]
+  invites      RoomInvite[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([createdById])
+  @@map("conversation_rooms")
+}
+
+// ─────────────────────────────────────────────
+// Conversation participant (polymorphic: agent or user)
+// ─────────────────────────────────────────────
+
+model ConversationParticipant {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  roomId          String          @db.Uuid
+  participantType ParticipantType
+  agentId         String?         @db.Uuid
+  userId          String?         @db.Uuid
+  seatOrder       Int
+  canIntervene    Boolean         @default(false) // only meaningful for USER participants
+  joinedAt        DateTime        @default(now())
+  leftAt          DateTime?
+
+  room  ConversationRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  agent Agent?           @relation("AgentParticipants", fields: [agentId], references: [id], onDelete: SetNull)
+  user  User?            @relation("UserParticipants", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([roomId, agentId])
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@index([agentId])
+  @@index([userId])
+  @@map("conversation_participants")
+}
+
+// ─────────────────────────────────────────────
+// Message
+// ─────────────────────────────────────────────
+
+model Message {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  roomId      String     @db.Uuid
+  senderType  SenderType
+  senderUserId  String?  @db.Uuid
+  senderAgentId String?  @db.Uuid
+  turnNumber  Int
+  content     String
+  tokenCount  Int?
+  metadata    Json       @default("{}") // latency, model version, finish_reason, etc.
+  createdAt   DateTime   @default(now())
+
+  room        ConversationRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderUser  User?            @relation("UserMessages", fields: [senderUserId], references: [id], onDelete: SetNull)
+  senderAgent Agent?           @relation("AgentMessages", fields: [senderAgentId], references: [id], onDelete: SetNull)
+
+  @@index([roomId, turnNumber])
+  @@index([roomId, createdAt])
+  @@index([senderAgentId])
+  @@index([senderUserId])
+  @@map("messages")
+}
+
+// ─────────────────────────────────────────────
+// Agent run (tracks each LLM invocation)
+// ─────────────────────────────────────────────
+
+model AgentRun {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentId       String    @db.Uuid
+  roomId        String    @db.Uuid
+  turnNumber    Int
+  status        RunStatus @default(QUEUED)
+  modelProvider String
+  modelName     String
+  promptTokens  Int?
+  completionTokens Int?
+  totalTokens   Int?
+  latencyMs     Int?
+  errorMessage  String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  agent Agent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  room  ConversationRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([roomId])
+  @@index([roomId, turnNumber])
+  @@index([status])
+  @@map("agent_runs")
+}
+
+// ─────────────────────────────────────────────
+// Audit log (append-only)
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @db.Uuid
+  actorId     String   @db.Uuid
+  action      String   // e.g. "agent.created", "room.started", "member.invited"
+  targetType  String   // e.g. "Agent", "ConversationRoom", "ApiKey"
+  targetId    String?  @db.Uuid
+  metadata    Json     @default("{}") // before/after snapshots, IP, user-agent
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User      @relation(fields: [actorId], references: [id])
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([actorId])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────
+// Room invite
+// ─────────────────────────────────────────────
+
+model RoomInvite {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  roomId       String       @db.Uuid
+  workspaceId  String       @db.Uuid
+  invitedById  String       @db.Uuid
+  inviteeId    String       @db.Uuid
+  inviteeEmail String
+  status       InviteStatus @default(PENDING)
+  agentId      String?      @db.Uuid
+  createdAt    DateTime     @default(now())
+  respondedAt  DateTime?
+
+  room      ConversationRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy User             @relation("SentInvites", fields: [invitedById], references: [id])
+  invitee   User             @relation("ReceivedInvites", fields: [inviteeId], references: [id])
+  agent     Agent?           @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@unique([roomId, inviteeId])
+  @@index([inviteeId, status])
+  @@index([roomId])
+  @@map("room_invites")
+}
+
+// ─────────────────────────────────────────────
+// API key (for programmatic access)
+// ─────────────────────────────────────────────
+
+model ApiKey {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String    @db.Uuid
+  userId      String    @db.Uuid
+  name        String
+  keyHash     String    @unique // SHA-256 of the raw key; raw key shown once on creation
+  keyPrefix   String    // first 8 chars for identification (e.g. "ap_live_aBcD...")
+  scopes      String[]  @default(["agent:read", "agent:write", "room:read", "room:write"])
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
+  @@index([workspaceId])
+  @@index([userId])
+  @@map("api_keys")
+}
