@@ -5,7 +5,7 @@ import { getSupabaseConfig } from "@/utils/supabase/config";
 export const createClient = async (request: NextRequest) => {
   const { supabaseUrl, supabaseKey, isConfigured } = getSupabaseConfig();
 
-  if (!isConfigured) {
+  if (!isConfigured || !supabaseUrl || !supabaseKey) {
     return NextResponse.next({
       request: {
         headers: request.headers,
