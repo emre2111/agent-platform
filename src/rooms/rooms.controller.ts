@@ -3,24 +3,25 @@ import {
   Get,
   Post,
   Delete,
+  BadRequestException,
   Param,
   Body,
   UseGuards,
   Req,
   HttpCode,
   HttpStatus,
-} from '@nestjs/common';
-import { RoomStatus } from '@prisma/client';
-import { RoomsService } from './rooms.service';
-import { OrchestratorService } from '../orchestrator/orchestrator.service';
-import { AuditService } from '../audit/audit.service';
-import { AuditAction } from '../audit/audit-events';
-import { CreateRoomDto } from './dto/create-room.dto';
-import { WorkspaceMemberGuard } from '../common/guards/workspace-member.guard';
-import { CurrentUser, WorkspaceId } from '../common/decorators';
-import { RequestUser, AuthenticatedRequest } from '../common/types';
+} from "@nestjs/common";
+import { RoomStatus } from "@prisma/client";
+import { RoomsService } from "./rooms.service";
+import { OrchestratorService } from "../orchestrator/orchestrator.service";
+import { AuditService } from "../audit/audit.service";
+import { AuditAction } from "../audit/audit-events";
+import { CreateRoomDto } from "./dto/create-room.dto";
+import { WorkspaceMemberGuard } from "../common/guards/workspace-member.guard";
+import { CurrentUser, WorkspaceId } from "../common/decorators";
+import { RequestUser, AuthenticatedRequest } from "../common/types";
 
-@Controller('workspaces/:workspaceId/rooms')
+@Controller("workspaces/:workspaceId/rooms")
 @UseGuards(WorkspaceMemberGuard)
 export class RoomsController {
   constructor(
@@ -53,18 +54,15 @@ export class RoomsController {
     return this.roomsService.listByWorkspace(workspaceId);
   }
 
-  @Get(':roomId')
-  findOne(
-    @Param('roomId') roomId: string,
-    @Req() req: AuthenticatedRequest,
-  ) {
+  @Get(":roomId")
+  findOne(@Param("roomId") roomId: string, @Req() req: AuthenticatedRequest) {
     return this.roomsService.findById(roomId, req.workspace!);
   }
 
-  @Delete(':roomId')
+  @Delete(":roomId")
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
-    @Param('roomId') roomId: string,
+    @Param("roomId") roomId: string,
     @WorkspaceId() workspaceId: string,
     @CurrentUser() user: RequestUser,
     @Req() req: AuthenticatedRequest,
@@ -78,21 +76,37 @@ export class RoomsController {
       actorId: user.userId,
       action: AuditAction.ROOM_STOPPED,
       targetId: roomId,
-      metadata: { action: 'deleted' },
+      metadata: { action: "deleted" },
     });
   }
 
-  @Post(':roomId/start')
+  @Post(":roomId/start")
   async start(
-    @Param('roomId') roomId: string,
+    @Param("roomId") roomId: string,
     @WorkspaceId() workspaceId: string,
     @CurrentUser() user: RequestUser,
     @Req() req: AuthenticatedRequest,
   ) {
-    const room = await this.roomsService.updateStatus(
-      roomId, RoomStatus.RUNNING, req.workspace!, user.userId,
-    );
-    await this.orchestrator.startRoom(roomId, workspaceId);
+    let room;
+    try {
+      room = await this.roomsService.updateStatus(
+        roomId,
+        RoomStatus.RUNNING,
+        req.workspace!,
+        user.userId,
+      );
+      await this.orchestrator.startRoom(roomId, workspaceId);
+    } catch (error) {
+      if (
+        error instanceof BadRequestException &&
+        String(error.message).includes(
+          "Cannot transition from RUNNING to RUNNING",
+        )
+      ) {
+        return this.roomsService.findById(roomId, req.workspace!);
+      }
+      throw error;
+    }
 
     await this.audit.log({
       workspaceId,
@@ -104,17 +118,33 @@ export class RoomsController {
     return room;
   }
 
-  @Post(':roomId/resume')
+  @Post(":roomId/resume")
   async resume(
-    @Param('roomId') roomId: string,
+    @Param("roomId") roomId: string,
     @WorkspaceId() workspaceId: string,
     @CurrentUser() user: RequestUser,
     @Req() req: AuthenticatedRequest,
   ) {
-    const room = await this.roomsService.updateStatus(
-      roomId, RoomStatus.RUNNING, req.workspace!, user.userId,
-    );
-    await this.orchestrator.resumeRoom(roomId, workspaceId, room.turnCount);
+    let room;
+    try {
+      room = await this.roomsService.updateStatus(
+        roomId,
+        RoomStatus.RUNNING,
+        req.workspace!,
+        user.userId,
+      );
+      await this.orchestrator.resumeRoom(roomId, workspaceId, room.turnCount);
+    } catch (error) {
+      if (
+        error instanceof BadRequestException &&
+        String(error.message).includes(
+          "Cannot transition from RUNNING to RUNNING",
+        )
+      ) {
+        return this.roomsService.findById(roomId, req.workspace!);
+      }
+      throw error;
+    }
 
     await this.audit.log({
       workspaceId,
@@ -127,15 +157,18 @@ export class RoomsController {
     return room;
   }
 
-  @Post(':roomId/pause')
+  @Post(":roomId/pause")
   async pause(
-    @Param('roomId') roomId: string,
+    @Param("roomId") roomId: string,
     @WorkspaceId() workspaceId: string,
     @CurrentUser() user: RequestUser,
     @Req() req: AuthenticatedRequest,
   ) {
     const room = await this.roomsService.updateStatus(
-      roomId, RoomStatus.PAUSED, req.workspace!, user.userId,
+      roomId,
+      RoomStatus.PAUSED,
+      req.workspace!,
+      user.userId,
     );
     await this.orchestrator.drainRoom(roomId);
 
@@ -149,15 +182,18 @@ export class RoomsController {
     return room;
   }
 
-  @Post(':roomId/stop')
+  @Post(":roomId/stop")
   async stop(
-    @Param('roomId') roomId: string,
+    @Param("roomId") roomId: string,
     @WorkspaceId() workspaceId: string,
     @CurrentUser() user: RequestUser,
     @Req() req: AuthenticatedRequest,
   ) {
     const room = await this.roomsService.updateStatus(
-      roomId, RoomStatus.CLOSED, req.workspace!, user.userId,
+      roomId,
+      RoomStatus.CLOSED,
+      req.workspace!,
+      user.userId,
     );
     await this.orchestrator.drainRoom(roomId);
     await this.orchestrator.cleanupRoom(roomId);
