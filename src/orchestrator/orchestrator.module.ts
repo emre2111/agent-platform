@@ -1,13 +1,14 @@
-import { Module } from '@nestjs/common';
-import { OrchestratorService } from './orchestrator.service';
-import { AgentRunService } from './agent-run.service';
-import { ConversationLoopProcessor } from './conversation-loop.processor';
-import { TurnProcessor } from './processors/turn.processor';
-import { RoundRobinStrategy } from './strategies/round-robin.strategy';
-import { AdaptersModule } from '../adapters/adapters.module';
-import { MessagesModule } from '../messages/messages.module';
-import { CredentialsModule } from '../credentials/credentials.module';
-import { RealtimeModule } from '../realtime/realtime.module';
+import { Module } from "@nestjs/common";
+import { OrchestratorService } from "./orchestrator.service";
+import { AgentRunService } from "./agent-run.service";
+import { ConversationLoopProcessor } from "./conversation-loop.processor";
+import { TurnProcessor } from "./processors/turn.processor";
+import { RoundRobinStrategy } from "./strategies/round-robin.strategy";
+import { AdaptersModule } from "../adapters/adapters.module";
+import { MessagesModule } from "../messages/messages.module";
+import { CredentialsModule } from "../credentials/credentials.module";
+import { RealtimeModule } from "../realtime/realtime.module";
+import { ProviderConnectionsModule } from "../provider-connections/provider-connections.module";
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     MessagesModule,
     CredentialsModule,
     RealtimeModule,
+    ProviderConnectionsModule,
   ],
   providers: [
     OrchestratorService,

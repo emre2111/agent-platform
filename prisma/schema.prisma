@@ -89,9 +89,30 @@ model User {
   auditLogs               AuditLog[]
   sentInvites             RoomInvite[]           @relation("SentInvites")
   receivedInvites         RoomInvite[]           @relation("ReceivedInvites")
+  providerConnections     ProviderConnection[]
 
   @@index([email])
   @@map("users")
+}
+
+model ProviderConnection {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String   @db.Uuid
+  provider        String
+  encryptedApiKey String
+  keyHint         String
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agents Agent[]
+
+  @@index([userId])
+  @@index([userId, provider])
+  @@index([userId, isActive])
+  @@unique([id, userId])
+  @@map("provider_connections")
 }
 
 // ─────────────────────────────────────────────
@@ -146,6 +167,7 @@ model Agent {
   id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workspaceId   String      @db.Uuid
   ownerId       String      @db.Uuid
+  providerConnectionId String? @db.Uuid
   name          String
   description   String?
   systemPrompt  String
@@ -159,6 +181,7 @@ model Agent {
 
   workspace    Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   owner        User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  providerConnection ProviderConnection? @relation(fields: [providerConnectionId, ownerId], references: [id, userId], onDelete: SetNull)
   credentials  AgentCredential[]
   participants ConversationParticipant[] @relation("AgentParticipants")
   runs         AgentRun[]
@@ -167,6 +190,7 @@ model Agent {
 
   @@index([workspaceId])
   @@index([ownerId])
+  @@index([providerConnectionId])
   @@index([workspaceId, status])
   @@map("agents")
 }

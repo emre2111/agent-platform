@@ -1,13 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SenderType, ParticipantType } from '@prisma/client';
-import { DatabaseService } from '../../database/database.service';
-import { MessagesService } from '../../messages/messages.service';
-import { AgentRunService } from '../agent-run.service';
-import { AdapterRegistry } from '../../adapters/adapter-registry';
-import { CredentialsService } from '../../credentials/credentials.service';
-import { RoundRobinStrategy } from '../strategies/round-robin.strategy';
-import { ConversationMessage, ProviderRequest } from '../../adapters/types';
-import { TurnResult } from '../types';
+import { Injectable, Logger } from "@nestjs/common";
+import { SenderType, ParticipantType } from "@prisma/client";
+import { DatabaseService } from "../../database/database.service";
+import { MessagesService } from "../../messages/messages.service";
+import { AgentRunService } from "../agent-run.service";
+import { AdapterRegistry } from "../../adapters/adapter-registry";
+import { CredentialsService } from "../../credentials/credentials.service";
+import { ProviderConnectionsService } from "../../provider-connections/provider-connections.service";
+import { RoundRobinStrategy } from "../strategies/round-robin.strategy";
+import { ConversationMessage, ProviderRequest } from "../../adapters/types";
+import { TurnResult } from "../types";
 
 /**
  * Executes exactly one agent turn:
@@ -27,6 +28,7 @@ export class TurnProcessor {
     private readonly agentRuns: AgentRunService,
     private readonly adapters: AdapterRegistry,
     private readonly credentials: CredentialsService,
+    private readonly providerConnections: ProviderConnectionsService,
     private readonly turnStrategy: RoundRobinStrategy,
   ) {}
 
@@ -43,16 +45,16 @@ export class TurnProcessor {
         leftAt: null,
       },
       include: { agent: true },
-      orderBy: { seatOrder: 'asc' },
+      orderBy: { seatOrder: "asc" },
     });
 
     const nextParticipant = this.turnStrategy.pick(participants, turnNumber);
     if (!nextParticipant?.agent) {
       return {
         ok: false,
-        agentId: 'none',
+        agentId: "none",
         turnNumber,
-        error: 'No eligible agent found for this turn',
+        error: "No eligible agent found for this turn",
         retriable: false,
       };
     }
@@ -71,12 +73,21 @@ export class TurnProcessor {
     try {
       await this.agentRuns.markRunning(run.id);
 
-      // ── 3. Decrypt credential (workspace-scoped) ──────────
-      const apiKey = await this.credentials.decryptKey(
-        agent.id,
-        agent.modelProvider,
-        workspaceId,
-      );
+      // ── 3. Resolve credential: provider-connection first, legacy fallback ──
+      let apiKey = await this.providerConnections.getDecryptedKeyForAgent({
+        id: agent.id,
+        ownerId: agent.ownerId,
+        modelProvider: agent.modelProvider,
+        providerConnectionId: agent.providerConnectionId,
+      });
+
+      if (!apiKey) {
+        apiKey = await this.credentials.decryptKey(
+          agent.id,
+          agent.modelProvider,
+          workspaceId,
+        );
+      }
 
       // ── 4. Build prompt from conversation history ─────────
       const history = await this.messages.getConversationContext(roomId, 50);
@@ -84,8 +95,8 @@ export class TurnProcessor {
       const providerMessages: ConversationMessage[] = history.map((m) => ({
         role:
           m.senderType === SenderType.AGENT
-            ? ('assistant' as const)
-            : ('user' as const),
+            ? ("assistant" as const)
+            : ("user" as const),
         content: m.content,
       }));
 
@@ -96,11 +107,11 @@ export class TurnProcessor {
         systemPrompt: agent.systemPrompt,
         messages: providerMessages,
         temperature:
-          typeof modelConfig.temperature === 'number'
+          typeof modelConfig.temperature === "number"
             ? modelConfig.temperature
             : undefined,
         maxTokens:
-          typeof modelConfig.maxTokens === 'number'
+          typeof modelConfig.maxTokens === "number"
             ? modelConfig.maxTokens
             : undefined,
         stopSequences: Array.isArray(modelConfig.stopSequences)
@@ -149,8 +160,7 @@ export class TurnProcessor {
         latencyMs,
       };
     } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : 'Unknown error';
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
 
       this.logger.error(
         `Turn ${turnNumber} failed for agent ${agent.id}: ${errorMessage}`,
@@ -173,11 +183,11 @@ export class TurnProcessor {
     if (!(err instanceof Error)) return false;
     const msg = err.message.toLowerCase();
     return (
-      msg.includes('rate limit') ||
-      msg.includes('timeout') ||
-      msg.includes('econnreset') ||
-      msg.includes('503') ||
-      msg.includes('529')
+      msg.includes("rate limit") ||
+      msg.includes("timeout") ||
+      msg.includes("econnreset") ||
+      msg.includes("503") ||
+      msg.includes("529")
     );
   }
 }
