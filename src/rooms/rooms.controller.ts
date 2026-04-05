@@ -2,10 +2,13 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Param,
   Body,
   UseGuards,
   Req,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { RoomStatus } from '@prisma/client';
 import { RoomsService } from './rooms.service';
@@ -56,6 +59,27 @@ export class RoomsController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.roomsService.findById(roomId, req.workspace!);
+  }
+
+  @Delete(':roomId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(
+    @Param('roomId') roomId: string,
+    @WorkspaceId() workspaceId: string,
+    @CurrentUser() user: RequestUser,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    await this.orchestrator.drainRoom(roomId).catch(() => {});
+    await this.orchestrator.cleanupRoom(roomId).catch(() => {});
+    await this.roomsService.deleteRoom(roomId, req.workspace!, user.userId);
+
+    await this.audit.log({
+      workspaceId,
+      actorId: user.userId,
+      action: AuditAction.ROOM_STOPPED,
+      targetId: roomId,
+      metadata: { action: 'deleted' },
+    });
   }
 
   @Post(':roomId/start')

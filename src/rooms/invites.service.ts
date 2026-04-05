@@ -3,13 +3,22 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
-import { InviteStatus, ParticipantType } from '@prisma/client';
+import { InviteStatus, ParticipantType, RoomStatus } from '@prisma/client';
 import { DatabaseService } from '../database/database.service';
+import { OrchestratorService } from '../orchestrator/orchestrator.service';
+import { RealtimePublisher } from '../realtime/realtime.publisher';
 
 @Injectable()
 export class InvitesService {
-  constructor(private readonly db: DatabaseService) {}
+  private readonly logger = new Logger(InvitesService.name);
+
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly orchestrator: OrchestratorService,
+    private readonly publisher: RealtimePublisher,
+  ) {}
 
   async sendInvite(
     roomId: string,
@@ -105,7 +114,7 @@ export class InvitesService {
   ) {
     const invite = await this.db.roomInvite.findFirst({
       where: { id: inviteId, workspaceId },
-      include: { room: { select: { id: true, workspaceId: true } } },
+      include: { room: { select: { id: true, workspaceId: true, status: true } } },
     });
     if (!invite) throw new NotFoundException('Invite not found');
 
@@ -129,7 +138,7 @@ export class InvitesService {
       throw new BadRequestException('Agent not found, not yours, or not active');
     }
 
-    return this.db.$transaction(async (tx) => {
+    const room = await this.db.$transaction(async (tx) => {
       await tx.roomInvite.update({
         where: { id: inviteId },
         data: {
@@ -171,6 +180,10 @@ export class InvitesService {
         },
       });
     });
+
+    await this.tryAutoStart(invite.roomId, workspaceId);
+
+    return room;
   }
 
   async declineInvite(inviteId: string, userId: string, workspaceId: string) {
@@ -187,10 +200,61 @@ export class InvitesService {
       throw new BadRequestException(`Invite is already ${invite.status.toLowerCase()}`);
     }
 
-    return this.db.roomInvite.update({
+    const result = await this.db.roomInvite.update({
       where: { id: inviteId },
       data: { status: InviteStatus.DECLINED, respondedAt: new Date() },
     });
+
+    await this.tryAutoStart(invite.roomId, workspaceId);
+
+    return result;
+  }
+
+  /**
+   * Check if all invites are resolved and the room should auto-start.
+   *
+   * Conditions:
+   *   1. Room status is IDLE (not already started manually)
+   *   2. Zero PENDING invites remain for this room
+   *   3. At least 2 active AGENT participants in the room
+   */
+  private async tryAutoStart(roomId: string, workspaceId: string): Promise<void> {
+    const room = await this.db.conversationRoom.findFirst({
+      where: { id: roomId, workspaceId },
+      select: { id: true, status: true },
+    });
+    if (!room || room.status !== RoomStatus.IDLE) return;
+
+    const pendingCount = await this.db.roomInvite.count({
+      where: { roomId, status: InviteStatus.PENDING },
+    });
+    if (pendingCount > 0) return;
+
+    const agentCount = await this.db.conversationParticipant.count({
+      where: {
+        roomId,
+        participantType: ParticipantType.AGENT,
+        leftAt: null,
+      },
+    });
+    if (agentCount < 2) return;
+
+    await this.db.conversationRoom.update({
+      where: { id: roomId },
+      data: { status: RoomStatus.RUNNING },
+    });
+
+    await this.orchestrator.startRoom(roomId, workspaceId);
+
+    this.publisher.publishRoomStatus({
+      roomId,
+      status: 'RUNNING',
+      reason: 'All invitees joined — conversation started automatically',
+    });
+
+    this.logger.log(
+      `Room ${roomId} auto-started: all invites resolved, ${agentCount} agents ready`,
+    );
   }
 
   async listByRoom(roomId: string, workspaceId: string) {

@@ -33,7 +33,7 @@ export class AuthService {
     // workspaceId is empty string — the user has no workspace yet.
     // This is the one exception to the "always have a workspaceId" rule.
     await this.audit.log({
-      workspaceId: '00000000-0000-0000-0000-000000000000',
+      workspaceId: null,
       actorId: user.id,
       action: AuditAction.USER_REGISTERED,
       targetId: user.id,
@@ -55,8 +55,8 @@ export class AuthService {
     if (!user || !passwordValid) {
       // Log failed attempt — no actorId available, use nil UUID
       await this.audit.log({
-        workspaceId: '00000000-0000-0000-0000-000000000000',
-        actorId: '00000000-0000-0000-0000-000000000000',
+        workspaceId: null,
+        actorId: null,
         action: AuditAction.USER_LOGIN_FAILED,
         metadata: { email: dto.email },
       });
@@ -71,7 +71,7 @@ export class AuthService {
     const tokens = this.issueTokens(user.id, user.email);
 
     await this.audit.log({
-      workspaceId: '00000000-0000-0000-0000-000000000000',
+      workspaceId: null,
       actorId: user.id,
       action: AuditAction.USER_LOGGED_IN,
       targetId: user.id,

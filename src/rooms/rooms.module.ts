@@ -7,9 +7,10 @@ import { ParticipantsController } from './participants.controller';
 import { InvitesController, MyInvitesController } from './invites.controller';
 import { PermissionsModule } from '../permissions/permissions.module';
 import { OrchestratorModule } from '../orchestrator/orchestrator.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
-  imports: [PermissionsModule, OrchestratorModule],
+  imports: [PermissionsModule, OrchestratorModule, RealtimeModule],
   controllers: [RoomsController, ParticipantsController, InvitesController, MyInvitesController],
   providers: [RoomsService, ParticipantsService, InvitesService],
   exports: [RoomsService, ParticipantsService, InvitesService],

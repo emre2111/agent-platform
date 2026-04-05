@@ -49,6 +49,32 @@ export class RoomsService {
     });
   }
 
+  async deleteRoom(roomId: string, workspace: WorkspaceContext, userId: string) {
+    const room = await this.db.conversationRoom.findFirst({
+      where: { id: roomId, workspaceId: workspace.workspaceId },
+      select: { id: true, createdById: true, status: true },
+    });
+
+    if (!room) {
+      throw new NotFoundException('Room not found');
+    }
+
+    this.permissions.enforce({
+      user: { userId, email: '' },
+      workspace,
+      action: Action.DELETE,
+      resource: Resource.ROOM,
+      resourceId: room.id,
+      resourceOwnerId: room.createdById,
+    });
+
+    if (room.status === 'RUNNING') {
+      throw new BadRequestException('Cannot delete a running room. Stop it first.');
+    }
+
+    await this.db.conversationRoom.delete({ where: { id: roomId } });
+  }
+
   async updateStatus(
     roomId: string,
     status: RoomStatus,

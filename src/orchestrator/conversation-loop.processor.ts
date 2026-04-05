@@ -12,7 +12,7 @@ import {
   stopReasonMessage,
 } from './stop-conditions';
 
-const ROOM_QUEUE_PREFIX = 'room:';
+const ROOM_QUEUE_PREFIX = 'room-';
 
 @Injectable()
 export class ConversationLoopProcessor {

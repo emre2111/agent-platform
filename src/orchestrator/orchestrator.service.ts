@@ -3,7 +3,7 @@ import { QueueService } from '../queue/queue.service';
 import { ConversationLoopProcessor } from './conversation-loop.processor';
 import { LoopJobData } from './types';
 
-const ROOM_QUEUE_PREFIX = 'room:';
+const ROOM_QUEUE_PREFIX = 'room-';
 
 @Injectable()
 export class OrchestratorService implements OnModuleInit {

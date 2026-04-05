@@ -142,7 +142,7 @@ export class CredentialsService {
     // Audit credential access — actor is "system" for background jobs
     await this.audit.log({
       workspaceId,
-      actorId: '00000000-0000-0000-0000-000000000000',
+      actorId: null,
       action: AuditAction.CREDENTIAL_ACCESSED,
       targetId: cred.id,
       metadata: { agentId, provider, source: 'orchestrator' },

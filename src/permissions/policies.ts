@@ -48,6 +48,7 @@ export const ACCESS_POLICIES: Partial<Record<PolicyKey, PolicyRule>> = {
   'room:create':       { role: 'MEMBER', ownership: 'any' },
   'room:read':         { role: 'MEMBER', ownership: 'any' },
   'room:update':       { role: 'MEMBER', ownership: 'own' },
+  'room:delete':       { role: 'MEMBER', ownership: 'own' },
   'room:start':        { role: 'MEMBER', ownership: 'own' },
   'room:pause':        { role: 'MEMBER', ownership: 'own' },
   'room:stop':         { role: 'MEMBER', ownership: 'own' },

@@ -6,11 +6,11 @@ import { AuditAction, AuditTargetType, ACTION_TARGET_MAP } from './audit-events'
 // ─── Public interface ──────────────────────────────────────────
 
 export interface AuditEntry {
-  /** Always required — tenant boundary */
-  workspaceId: string;
+  /** Tenant boundary. Null for auth events that happen outside a workspace. */
+  workspaceId?: string | null;
 
-  /** Who performed the action. For system actions, use a well-known system user ID. */
-  actorId: string;
+  /** Who performed the action. Null for anonymous events like failed login. */
+  actorId?: string | null;
 
   /** What happened — must be a value from AuditAction enum */
   action: AuditAction;

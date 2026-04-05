@@ -319,16 +319,16 @@ model AgentRun {
 
 model AuditLog {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId String   @db.Uuid
-  actorId     String   @db.Uuid
+  workspaceId String?  @db.Uuid
+  actorId     String?  @db.Uuid
   action      String   // e.g. "agent.created", "room.started", "member.invited"
   targetType  String   // e.g. "Agent", "ConversationRoom", "ApiKey"
   targetId    String?  @db.Uuid
   metadata    Json     @default("{}") // before/after snapshots, IP, user-agent
   createdAt   DateTime @default(now())
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  actor     User      @relation(fields: [actorId], references: [id])
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?      @relation(fields: [actorId], references: [id])
 
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([actorId])
