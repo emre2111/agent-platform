@@ -1,15 +1,15 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { getSocket } from './socket';
-import { fetchMessages } from '@/lib/api/rooms';
+import { useEffect, useRef, useState, useCallback } from "react";
+import { getSocket, isSocketConnected } from "./socket";
+import { fetchMessages, fetchRoom } from "@/lib/api/rooms";
 import type {
   Message,
   RoomStatus,
   TurnStarted,
   TurnError,
   RoomStatusEvent,
-} from '@/lib/types/room';
+} from "@/lib/types/room";
 
 function sortMessages(msgs: Message[]): Message[] {
   return [...msgs].sort((a, b) => {
@@ -55,10 +55,10 @@ export function useRoomSubscription({
 
     function subscribe() {
       socket.emit(
-        'subscribe_room',
+        "subscribe_room",
         { roomId, workspaceId },
         (res: { ok: boolean; error?: string }) => {
-          if (!res.ok) console.error('[ws] subscribe failed:', res.error);
+          if (!res.ok) console.error("[ws] subscribe failed:", res.error);
         },
       );
     }
@@ -70,11 +70,11 @@ export function useRoomSubscription({
       // Gap-fill after reconnection
       const lastMsg = messages[messages.length - 1];
       if (lastMsg) {
-        fetchMessages(workspaceId, roomId, token, lastMsg.id).then(
-          (missed) => {
+        fetchMessages(workspaceId, roomId, token, lastMsg.id)
+          .then((missed) => {
             for (const m of missed) addMessage(m);
-          },
-        ).catch(() => {});
+          })
+          .catch(() => {});
       }
     }
 
@@ -100,12 +100,12 @@ export function useRoomSubscription({
       setRoomStatus(data.status);
     }
 
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('message.new', onMessage);
-    socket.on('turn.started', onTurnStarted);
-    socket.on('turn.error', onTurnError);
-    socket.on('room.status', onRoomStatus);
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("message.new", onMessage);
+    socket.on("turn.started", onTurnStarted);
+    socket.on("turn.error", onTurnError);
+    socket.on("room.status", onRoomStatus);
 
     if (socket.connected) {
       subscribe();
@@ -113,17 +113,41 @@ export function useRoomSubscription({
     }
 
     return () => {
-      socket.emit('unsubscribe_room', { roomId });
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('message.new', onMessage);
-      socket.off('turn.started', onTurnStarted);
-      socket.off('turn.error', onTurnError);
-      socket.off('room.status', onRoomStatus);
+      socket.emit("unsubscribe_room", { roomId });
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("message.new", onMessage);
+      socket.off("turn.started", onTurnStarted);
+      socket.off("turn.error", onTurnError);
+      socket.off("room.status", onRoomStatus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, workspaceId, token]);
+  // HTTP polling fallback when WebSocket is unavailable
+  useEffect(() => {
+    // Only poll when WS is disconnected
+    if (isConnected) return;
 
+    const POLL_INTERVAL = 3000;
+    const interval = setInterval(async () => {
+      // Skip polling if WS just reconnected
+      if (isSocketConnected()) return;
+
+      try {
+        const [freshMessages, room] = await Promise.all([
+          fetchMessages(workspaceId, roomId, token),
+          fetchRoom(workspaceId, roomId, token),
+        ]);
+
+        for (const m of freshMessages) addMessage(m);
+        if (room.status !== roomStatus) setRoomStatus(room.status);
+      } catch {
+        // Silently ignore poll failures (e.g. 401 expired token)
+      }
+    }, POLL_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, [isConnected, roomId, workspaceId, token, addMessage, roomStatus]);
   return {
     messages,
     roomStatus,
