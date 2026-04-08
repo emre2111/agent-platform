@@ -1,22 +1,25 @@
-import { createClient } from "@/utils/supabase/server";
-import { cookies } from "next/headers";
+"use client";
 
-type Todo = {
-  id: string;
-  name: string;
-};
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/stores/auth-context";
 
-export default async function Page() {
-  const cookieStore = await cookies();
-  const supabase = createClient(cookieStore);
+export default function HomePage() {
+  const router = useRouter();
+  const { token, isLoading } = useAuth();
 
-  const { data: todos } = await supabase.from("todos").select();
+  useEffect(() => {
+    if (isLoading) return;
+    if (token) {
+      router.replace("/workspaces");
+      return;
+    }
+    router.replace("/login");
+  }, [token, isLoading, router]);
 
   return (
-    <ul>
-      {todos?.map((todo: Todo) => (
-        <li key={todo.id}>{todo.name}</li>
-      ))}
-    </ul>
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="text-sm text-zinc-500">Redirecting...</div>
+    </div>
   );
 }
